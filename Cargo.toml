@@ -1,0 +1,19 @@
+[package]
+name = "sophia_sparql_client"
+version = "0.1.0"
+authors = ["Pierre-Antoine Champin <pierre-antoine@liris.cnrs.fr>"]
+description = "A client implementation of the SPARQL protocol for Sophia"
+license = "CECILL-B"
+keywords = ["rdf", "linked-data", "semantic-web"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rio_turtle = "0.5.1"
+rio_xml = "0.5.1"
+serde = { version="1.0.122", features=["derive"] }
+serde_json = "1.0"
+sophia = { git="https://github.com/pchampin/sophia_rs/", rev="686d753", features=["xml"]}
+thiserror = "1.0.23"
+ureq = { version="2.0.1", features=["json"] }
