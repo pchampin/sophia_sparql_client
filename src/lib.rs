@@ -3,8 +3,8 @@
 //!
 //! Example:
 //! ```
-//! use sophia::sparql::{SparqlDataset, SparqlResult};
-//! use sophia::term::TTerm;
+//! use sophia::api::sparql::{SparqlDataset, SparqlResult};
+//! use sophia::api::term::Term;
 //! use sophia_sparql_client::SparqlClient;
 //!
 //! # fn bla() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,8 +24,8 @@
 //! if let SparqlResult::Bindings(bindings) = cli.query(query)? {
 //!     for b in bindings {
 //!         let b = b?;
-//!         let doctor_label = b[1].as_ref().unwrap().value();
-//!         let performer_label = b[4].as_ref().unwrap().value();
+//!         let doctor_label = b[1].as_ref().and_then(|t| t.lexical_form()).unwrap();
+//!         let performer_label = b[4].as_ref().and_then(|t| t.lexical_form()).unwrap_or("NULL".into());
 //!         println!("{}\t{}", doctor_label, performer_label);
 //!     }
 //! }
@@ -34,11 +34,13 @@
 //!
 //! [SPARQL1.1 protocol]: https://www.w3.org/TR/sparql11-protocol/
 //! [Sophia]: https://docs.rs/sophia/
-use sophia::parser::{nt, turtle, xml};
-use sophia::sparql::{Query as SparqlQuery, SparqlBindings, SparqlDataset, SparqlResult, ToQuery};
-use sophia::term::{BoxTerm, CopyTerm};
-use sophia::triple::stream::TripleSource;
-use sophia::triple::Triple;
+use sophia::api::prelude::*;
+use sophia::api::sparql::{
+    IntoQuery, Query as SparqlQuery, SparqlBindings, SparqlDataset, SparqlResult,
+};
+use sophia::api::term::SimpleTerm;
+use sophia::turtle::parser::{nt, turtle};
+use sophia::xml::parser as xml;
 use std::borrow::Borrow;
 use std::io::BufReader;
 use ureq::{Agent, Error as UreqError};
@@ -46,6 +48,8 @@ use ureq::{Agent, Error as UreqError};
 mod results;
 pub use results::BindingsDocument as Bindings;
 use results::ResultsDocument;
+
+type StaticTerm = SimpleTerm<'static>;
 
 pub struct SparqlClient {
     endpoint: Box<str>,
@@ -93,15 +97,9 @@ impl SparqlClient {
     where
         Error: From<T::Error>,
     {
-        let it: Box<dyn Iterator<Item = Result<[BoxTerm; 3], Error>>> = Box::new(
+        let it: Box<dyn Iterator<Item = Result<[StaticTerm; 3], Error>>> = Box::new(
             triples
-                .map_triples(|t| {
-                    [
-                        BoxTerm::copy(t.s()),
-                        BoxTerm::copy(t.p()),
-                        BoxTerm::copy(t.o()),
-                    ]
-                })
+                .map_triples(|t| [t.s().into_term(), t.p().into_term(), t.o().into_term()])
                 .into_iter()
                 .map(|r| r.map_err(Error::from)),
         );
@@ -110,17 +108,17 @@ impl SparqlClient {
 }
 
 impl SparqlDataset for SparqlClient {
-    type BindingsTerm = BoxTerm;
+    type BindingsTerm = StaticTerm;
     type BindingsResult = Bindings;
-    type TriplesResult = Box<dyn Iterator<Item = Result<[BoxTerm; 3], Error>>>;
+    type TriplesResult = Box<dyn Iterator<Item = Result<[StaticTerm; 3], Error>>>;
     type SparqlError = Error;
     type Query = Query;
 
     fn query<Q>(&self, query: Q) -> Result<SparqlResult<Self>, Error>
     where
-        Q: ToQuery<Query>,
+        Q: IntoQuery<Query>,
     {
-        let query = query.to_query()?;
+        let query = query.into_query()?;
         let resp = self
             .agent
             .post(&self.endpoint)
@@ -164,7 +162,7 @@ impl SparqlBindings<SparqlClient> for Bindings {
 }
 
 impl Iterator for Bindings {
-    type Item = Result<Vec<Option<BoxTerm>>, Error>;
+    type Item = Result<Vec<Option<StaticTerm>>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.results.bindings.is_empty() {
@@ -187,11 +185,23 @@ pub enum Error {
     Http(#[source] Box<UreqError>),
     #[error("{0}")]
     Unsupported(String),
-    #[error("invalid term: {0}")]
-    Term(
+    #[error("invalid iri: {0}")]
+    Iri(
         #[source]
         #[from]
-        sophia::term::TermError,
+        sophia::iri::InvalidIri,
+    ),
+    #[error("invalid bnode identifier: {0}")]
+    BNode(
+        #[source]
+        #[from]
+        sophia::api::term::bnode_id::InvalidBnodeId,
+    ),
+    #[error("invalid language tag: {0}")]
+    LanguageTag(
+        #[source]
+        #[from]
+        sophia::api::term::language_tag::InvalidLanguageTag,
     ),
     #[error("turtle parsing error: {0}")]
     RioTurtle(
@@ -231,9 +241,8 @@ impl SparqlQuery for Query {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sophia::graph::isomorphic_graphs;
-    use sophia::ns::xsd;
-    use sophia::term::{TTerm, TermKind};
+    use sophia::api::term::{LanguageTag, TermKind};
+    use sophia::isomorphism::isomorphic_graphs;
     use SparqlResult::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -253,12 +262,9 @@ mod tests {
                 assert_eq!(b.variables(), vec!["answer".to_string()]);
                 let bindings = b.into_iter().collect::<Vec<_>>();
                 assert_eq!(bindings.len(), 1);
-                assert_eq!(
-                    bindings[0].as_ref().unwrap()[0],
-                    Some(BoxTerm::new_literal_dt("42", xsd::integer)?)
-                );
+                assert_eq!(bindings[0].as_ref().unwrap()[0], Some(42.into_term()));
             }
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }
@@ -285,27 +291,21 @@ mod tests {
                 assert_eq!(bindings.len(), 3);
                 assert_eq!(
                     bindings[0].as_ref().unwrap()[0],
-                    Some(BoxTerm::new_iri("tag:a")?)
+                    Some(Iri::new_unchecked("tag:a").into_term())
                 );
-                assert_eq!(
-                    bindings[0].as_ref().unwrap()[1],
-                    Some(BoxTerm::new_literal_dt("simple", xsd::string)?)
-                );
-                assert_eq!(
-                    bindings[0].as_ref().unwrap()[2],
-                    Some(BoxTerm::new_literal_dt("42", xsd::integer)?)
-                );
+                assert_eq!(bindings[0].as_ref().unwrap()[1], Some("simple".into_term()));
+                assert_eq!(bindings[0].as_ref().unwrap()[2], Some(42.into_term()));
                 assert_eq!(bindings[1].as_ref().unwrap()[0], None);
                 assert_eq!(
                     bindings[1].as_ref().unwrap()[1],
-                    Some(BoxTerm::new_literal_lang("lang", "en")?)
+                    Some("lang" * LanguageTag::new_unchecked("en"))
                 );
                 assert_eq!(bindings[1].as_ref().unwrap()[2], None);
                 assert_eq!(bindings[2].as_ref().unwrap()[0], None);
                 assert_eq!(bindings[2].as_ref().unwrap()[1], None);
                 assert_eq!(bindings[2].as_ref().unwrap()[2], None);
             }
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }
@@ -329,7 +329,7 @@ mod tests {
                     TermKind::BlankNode
                 );
             }
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }
@@ -338,7 +338,7 @@ mod tests {
     fn ask_true() -> TestResult {
         match client().query("ASK {}")? {
             Boolean(true) => (),
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }
@@ -347,7 +347,7 @@ mod tests {
     fn ask_false() -> TestResult {
         match client().query("PREFIX : <tag:> ASK {:abcdef :ghijkl :mnopqr}")? {
             Boolean(false) => (),
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }
@@ -377,7 +377,7 @@ mod tests {
         test_construct(client().with_accept("application/rdf+xml"), COMPLEX_TTL)
     }
 
-    const COMPLEX_TTL: &'static str = r#"
+    const COMPLEX_TTL: &str = r#"
         :s :p1 :o1, :o2;
         :p2 :o1, :o3;
         :label "S".
@@ -385,15 +385,15 @@ mod tests {
 
     fn test_construct(client: SparqlClient, ttl: &str) -> TestResult {
         let src = format!("@prefix : <tag:>. {}", ttl);
-        let exp: Vec<[BoxTerm; 3]> = turtle::parse_str(&src).collect_triples()?;
+        let exp: Vec<[StaticTerm; 3]> = turtle::parse_str(&src).collect_triples()?;
         let q = format!("PREFIX : <tag:> CONSTRUCT {{ {} }} {{}}", ttl);
 
         match client.query(q.as_str())? {
             Triples(triples) => {
-                let got: Vec<[BoxTerm; 3]> = triples.collect_triples()?;
+                let got: Vec<[StaticTerm; 3]> = triples.collect_triples()?;
                 assert!(isomorphic_graphs(&got, &exp)?);
             }
-            _ => assert!(false),
+            _ => panic!(),
         };
         Ok(())
     }

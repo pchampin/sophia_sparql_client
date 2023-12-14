@@ -1,5 +1,5 @@
-use sophia::sparql::{SparqlDataset, SparqlResult};
-use sophia::term::TTerm;
+use sophia::api::sparql::{SparqlDataset, SparqlResult};
+use sophia::api::term::Term;
 use sophia_sparql_client::SparqlClient;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,9 +19,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let SparqlResult::Bindings(bindings) = cli.query(query)? {
         for b in bindings {
             let b = b?;
-            let doctor_label = b[1].as_ref().unwrap().value();
-            let performer_label = b[4].as_ref().unwrap().value();
-            println!("{}\t{}", doctor_label, performer_label);
+            let doctor_label = b[1].as_ref().and_then(|t| t.lexical_form()).unwrap();
+            let performer_label = b[4]
+                .as_ref()
+                .and_then(|t| t.lexical_form())
+                .unwrap_or("NULL".into());
+            println!("{:?}\t{:?}", doctor_label, performer_label);
         }
     } else {
         panic!("Unexpected results for the query.");

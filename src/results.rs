@@ -1,7 +1,8 @@
 use super::Error;
+use super::StaticTerm;
 use serde::{Deserialize, Serialize};
-use sophia::ns::xsd;
-use sophia::term::BoxTerm;
+use sophia::api::term::{BnodeId, LanguageTag, Term as _};
+use sophia::iri::IriRef;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 
@@ -71,30 +72,33 @@ pub enum Literal {
     },
 }
 
-impl TryFrom<Term> for BoxTerm {
+impl TryFrom<Term> for StaticTerm {
     type Error = Error;
-    fn try_from(other: Term) -> Result<BoxTerm, Error> {
+    fn try_from(other: Term) -> Result<StaticTerm, Error> {
         use self::Literal::*;
         use Term::*;
         match other {
-            Bnode { value } => Ok(BoxTerm::new_bnode(value)?),
-            Literal(Simple { value }) => Ok(BoxTerm::new_literal_dt(value, xsd::string)?),
-            Literal(Datatype { value, datatype }) => {
-                Ok(BoxTerm::new_literal_dt(value, BoxTerm::new_iri(datatype)?)?)
+            Bnode { value } => Ok(BnodeId::new(value)?.into_term()),
+            Literal(Simple { value }) => Ok(value.as_ref().into_term()),
+            Literal(Datatype { value, datatype }) => Ok(StaticTerm::LiteralDatatype(
+                value.into(),
+                IriRef::new(datatype.into())?,
+            )),
+            Literal(Lang { value, lang }) => {
+                Ok((value.as_ref() * LanguageTag::new(lang.as_ref())?).into_term())
             }
-            Literal(Lang { value, lang }) => Ok(BoxTerm::new_literal_lang(value, lang)?),
-            Uri { value } => Ok(BoxTerm::new_iri(value)?),
+            Uri { value } => Ok(IriRef::new(value)?.into_term()),
         }
     }
 }
 
 impl BindingsDocument {
-    pub(super) fn pop_binding(&mut self) -> Result<Vec<Option<BoxTerm>>, Error> {
+    pub(super) fn pop_binding(&mut self) -> Result<Vec<Option<StaticTerm>>, Error> {
         debug_assert!(!self.results.bindings.is_empty());
         let mut hm = self.results.bindings.drain(..1).next().unwrap();
-        let mut v = Vec::<Option<BoxTerm>>::with_capacity(self.head.vars.len());
+        let mut v = Vec::<Option<StaticTerm>>::with_capacity(self.head.vars.len());
         for key in &self.head.vars {
-            match hm.remove(&*key) {
+            match hm.remove(key) {
                 None => v.push(None),
                 Some(term) => v.push(Some(term.try_into()?)),
             }
@@ -106,7 +110,6 @@ impl BindingsDocument {
 #[cfg(test)]
 mod test_json {
     use super::*;
-    use serde_json;
 
     #[test]
     fn uri() {
