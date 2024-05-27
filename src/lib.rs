@@ -41,7 +41,7 @@ use sophia::api::sparql::{
 };
 use sophia::api::term::SimpleTerm;
 use sophia::turtle::parser::{nt, turtle};
-use sophia::xml::parser as xml;
+use sophia::xml::parser as rdfxml;
 use std::borrow::Borrow;
 use std::io::Cursor;
 
@@ -141,7 +141,11 @@ impl SparqlDataset for SparqlClient {
                 ResultsDocument::Bindings { doc } => Ok(SparqlResult::Bindings(doc)),
             },
             "application/sparql-results+xml" => {
-                todo!("XML bindings not supported yet")
+                let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
+                match ResultsDocument::from_xml(body)? {
+                    ResultsDocument::Boolean { boolean, .. } => Ok(SparqlResult::Boolean(boolean)),
+                    ResultsDocument::Bindings { doc } => Ok(SparqlResult::Bindings(doc)),
+                }
             }
             "text/turtle" => {
                 let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
@@ -153,7 +157,7 @@ impl SparqlDataset for SparqlClient {
             }
             "application/rdf+xml" => {
                 let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
-                Self::wrap_triple_source(xml::parse_bufread(body))
+                Self::wrap_triple_source(rdfxml::parse_bufread(body))
             }
             _ => Err(Error::Unsupported(format!(
                 "unsupported content-type: {0}",
@@ -227,6 +231,14 @@ pub enum Error {
         #[from]
         rio_xml::RdfXmlError,
     ),
+    #[error("XML results parsing error: {0}")]
+    Xml(
+        #[source]
+        #[from]
+        quick_xml::Error,
+    ),
+    #[error("XML results structural error: {0}")]
+    SparqlXml(String),
 }
 
 impl From<ReqwestError> for Error {

@@ -6,6 +6,8 @@ use sophia::iri::IriRef;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 
+mod xml_parser;
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ResultsDocument {
@@ -45,13 +47,10 @@ pub struct Results {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum Term {
-    #[serde(rename = "bnode")]
     Bnode { value: Box<str> },
-    #[serde(rename = "literal")]
     Literal(Literal),
-    #[serde(rename = "uri")]
     Uri { value: Box<str> },
 }
 
@@ -104,6 +103,12 @@ impl BindingsDocument {
             }
         }
         Ok(v)
+    }
+}
+
+impl ResultsDocument {
+    pub fn from_xml<T: std::io::BufRead>(data: T) -> Result<ResultsDocument, crate::Error> {
+        xml_parser::parse_results_document(data)
     }
 }
 
@@ -356,6 +361,25 @@ mod test_json {
         let exp = ResultsDocument::Boolean {
             head: BooleanHead { link: vec![] },
             boolean: true,
+        };
+        assert_eq!(got, exp);
+    }
+
+    #[test]
+    fn boolean_doc_with_link() {
+        let src = r#"
+        {
+            "head": {
+                "link": [ "https://example.org" ]
+            },
+            "boolean": false
+        }"#;
+        let got: ResultsDocument = serde_json::from_str(src).unwrap();
+        let exp = ResultsDocument::Boolean {
+            head: BooleanHead {
+                link: vec!["https://example.org".into()],
+            },
+            boolean: false,
         };
         assert_eq!(got, exp);
     }
