@@ -34,6 +34,7 @@
 //!
 //! [SPARQL1.1 protocol]: https://www.w3.org/TR/sparql11-protocol/
 //! [Sophia]: https://docs.rs/sophia/
+use reqwest::{blocking::Client, Error as ReqwestError};
 use sophia::api::prelude::*;
 use sophia::api::sparql::{
     IntoQuery, Query as SparqlQuery, SparqlBindings, SparqlDataset, SparqlResult,
@@ -42,8 +43,7 @@ use sophia::api::term::SimpleTerm;
 use sophia::turtle::parser::{nt, turtle};
 use sophia::xml::parser as xml;
 use std::borrow::Borrow;
-use std::io::BufReader;
-use ureq::{Agent, Error as UreqError};
+use std::io::Cursor;
 
 mod results;
 pub use results::BindingsDocument as Bindings;
@@ -53,7 +53,7 @@ type StaticTerm = SimpleTerm<'static>;
 
 pub struct SparqlClient {
     endpoint: Box<str>,
-    agent: Agent,
+    client: Client,
     accept: Option<String>,
 }
 
@@ -65,14 +65,14 @@ impl SparqlClient {
     pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: Box::from(endpoint),
-            agent: Agent::new(),
+            client: Client::new(),
             accept: None,
         }
     }
 
-    /// Replace the underlying [`ureq::Agent`] of this client.
-    pub fn with_agent(mut self, agent: Agent) -> Self {
-        self.agent = agent;
+    /// Replace the underlying [`reqwest::Client`] of this client.
+    pub fn with_client(mut self, client: Client) -> Self {
+        self.client = client;
         self
     }
 
@@ -120,32 +120,44 @@ impl SparqlDataset for SparqlClient {
     {
         let query = query.into_query()?;
         let resp = self
-            .agent
-            .post(&self.endpoint)
-            .set("Accept", self.accept())
-            .set("Content-type", "application/sparql-query")
-            .send_string(&query.borrow().0)?;
-        use ResultsDocument::*;
-        match resp.content_type() {
-            "application/sparql-results+json" => match resp.into_json::<ResultsDocument>()? {
-                Boolean { boolean, .. } => Ok(SparqlResult::Boolean(boolean)),
-                Bindings { doc } => Ok(SparqlResult::Bindings(doc)),
+            .client
+            .post(&self.endpoint[..])
+            .header("Accept", self.accept())
+            .header("Content-type", "application/sparql-query")
+            .header("User-Agent", "Sophia SPARQL Client")
+            .body(query.borrow().0.to_string())
+            .send()?;
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .map(|h| h.to_str().unwrap())
+            .unwrap_or("application/octet-stream")
+            .split(';')
+            .next()
+            .unwrap();
+        match ctype {
+            "application/sparql-results+json" => match resp.json::<ResultsDocument>()? {
+                ResultsDocument::Boolean { boolean, .. } => Ok(SparqlResult::Boolean(boolean)),
+                ResultsDocument::Bindings { doc } => Ok(SparqlResult::Bindings(doc)),
             },
             "application/sparql-results+xml" => {
                 todo!("XML bindings not supported yet")
             }
             "text/turtle" => {
-                Self::wrap_triple_source(turtle::parse_bufread(BufReader::new(resp.into_reader())))
+                let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
+                Self::wrap_triple_source(turtle::parse_bufread(body))
             }
             "application/n-triples" => {
-                Self::wrap_triple_source(nt::parse_bufread(BufReader::new(resp.into_reader())))
+                let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
+                Self::wrap_triple_source(nt::parse_bufread(body))
             }
             "application/rdf+xml" => {
-                Self::wrap_triple_source(xml::parse_bufread(BufReader::new(resp.into_reader())))
+                let body: Cursor<Vec<u8>> = Cursor::new(resp.bytes()?.into());
+                Self::wrap_triple_source(xml::parse_bufread(body))
             }
-            ctype => Err(Error::Unsupported(format!(
+            _ => Err(Error::Unsupported(format!(
                 "unsupported content-type: {0}",
-                ctype
+                &ctype,
             ))),
         }
     }
@@ -182,7 +194,7 @@ pub enum Error {
         std::io::Error,
     ),
     #[error("http error: {0}")]
-    Http(#[source] Box<UreqError>),
+    Http(#[source] Box<ReqwestError>),
     #[error("{0}")]
     Unsupported(String),
     #[error("invalid iri: {0}")]
@@ -217,8 +229,8 @@ pub enum Error {
     ),
 }
 
-impl From<UreqError> for Error {
-    fn from(other: UreqError) -> Error {
+impl From<ReqwestError> for Error {
+    fn from(other: ReqwestError) -> Error {
         Error::Http(Box::new(other))
     }
 }
