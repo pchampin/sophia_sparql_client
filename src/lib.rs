@@ -269,19 +269,17 @@ mod tests {
     use sophia::isomorphism::isomorphic_graphs;
     use SparqlResult::*;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-    fn client() -> SparqlClient {
-        let endpoint = match std::env::var("SOPHIA_SPARQL_ENDPOINT").ok() {
-            None => "http://localhost:8080/sparql".to_string(),
-            Some(ret) => ret,
-        };
-        SparqlClient::new(&endpoint)
+    fn client() -> TestResult<SparqlClient> {
+        let endpoint = std::env::var("SOPHIA_SPARQL_ENDPOINT")
+            .map_err(|_| "Please set SOPHIA_SPARQL_ENDPOINT with an endpoint URL".to_string())?;
+        Ok(SparqlClient::new(&endpoint))
     }
 
     #[test]
     fn select_simple() -> TestResult {
-        match client().query("SELECT (42 as ?answer) {}")? {
+        match client()?.query("SELECT (42 as ?answer) {}")? {
             Bindings(b) => {
                 assert_eq!(b.variables(), vec!["answer".to_string()]);
                 let bindings = b.into_iter().collect::<Vec<_>>();
@@ -295,7 +293,7 @@ mod tests {
 
     #[test]
     fn select_complex() -> TestResult {
-        match client().query(
+        match client()?.query(
             r#"
             PREFIX : <tag:>
             SELECT ?x ?y ?z {}
@@ -336,7 +334,7 @@ mod tests {
 
     #[test]
     fn select_bnode() -> TestResult {
-        match client().query(
+        match client()?.query(
             r#"
             PREFIX : <tag:>
             SELECT ?x {
@@ -360,7 +358,7 @@ mod tests {
 
     #[test]
     fn ask_true() -> TestResult {
-        match client().query("ASK {}")? {
+        match client()?.query("ASK {}")? {
             Boolean(true) => (),
             _ => panic!(),
         };
@@ -369,7 +367,7 @@ mod tests {
 
     #[test]
     fn ask_false() -> TestResult {
-        match client().query("PREFIX : <tag:> ASK {:abcdef :ghijkl :mnopqr}")? {
+        match client()?.query("PREFIX : <tag:> ASK {:abcdef :ghijkl :mnopqr}")? {
             Boolean(false) => (),
             _ => panic!(),
         };
@@ -378,27 +376,27 @@ mod tests {
 
     #[test]
     fn construct_empty() -> TestResult {
-        test_construct(client(), "")
+        test_construct(client()?, "")
     }
 
     #[test]
     fn construct_one_triple() -> TestResult {
-        test_construct(client(), "[] a 42.")
+        test_construct(client()?, "[] a 42.")
     }
 
     #[test]
     fn construct_complex() -> TestResult {
-        test_construct(client(), COMPLEX_TTL)
+        test_construct(client()?, COMPLEX_TTL)
     }
 
     #[test]
     fn construct_ntriples() -> TestResult {
-        test_construct(client().with_accept("application/n-triples"), COMPLEX_TTL)
+        test_construct(client()?.with_accept("application/n-triples"), COMPLEX_TTL)
     }
 
     #[test]
     fn construct_rdfxml() -> TestResult {
-        test_construct(client().with_accept("application/rdf+xml"), COMPLEX_TTL)
+        test_construct(client()?.with_accept("application/rdf+xml"), COMPLEX_TTL)
     }
 
     const COMPLEX_TTL: &str = r#"
