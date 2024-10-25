@@ -1,5 +1,5 @@
 //! A client implementation of the [SPARQL1.1 protocol] based on [Sophia].
-//! It implements [`sophia::sparql::SparqlDataset`].
+//! It implements [`sophia::api::sparql::SparqlDataset`].
 //!
 //! Example:
 //! ```
@@ -33,6 +33,8 @@
 //!
 //! [SPARQL1.1 protocol]: https://www.w3.org/TR/sparql11-protocol/
 //! [Sophia]: https://docs.rs/sophia/
+#![deny(missing_docs)]
+
 use reqwest::{blocking::Client, Error as ReqwestError};
 use sophia::api::prelude::*;
 use sophia::api::sparql::{
@@ -50,6 +52,9 @@ use results::ResultsDocument;
 
 type StaticTerm = SimpleTerm<'static>;
 
+/// A [SPARQL 1.1] client implementing [`SparqlDataset`].
+///
+/// [SPARQL 1.1]: https://www.w3.org/TR/sparql11-protocol/
 pub struct SparqlClient {
     endpoint: Box<str>,
     client: Client,
@@ -58,7 +63,7 @@ pub struct SparqlClient {
 
 impl SparqlClient {
     /// The default [Accept HTTP header](https://tools.ietf.org/html/rfc7231.html#section-5.3.2) used by clients.
-    const DEFAULT_ACCEPT: &'static str = "application/sparql-results+json,application/sparql-results+xml;q=0.8,text/turtle,application/n-triples;q=0.9,application/rdf+xml;q=0.8";
+    pub const DEFAULT_ACCEPT: &'static str = "application/sparql-results+json,application/sparql-results+xml;q=0.8,text/turtle,application/n-triples;q=0.9,application/rdf+xml;q=0.8";
 
     /// Create a [`SparqlClient`] on the given SPARQL-endpoint URL.
     pub fn new(endpoint: &str) -> Self {
@@ -189,54 +194,74 @@ impl Iterator for Bindings {
 }
 
 #[derive(Debug, thiserror::Error)]
+/// Error type produced by [`SparqlClient`].
 pub enum Error {
     #[error("i/o error: {0}")]
+    /// An [`std::io::Error`] occurred while communicating with the SPARQL endpoint.
     Io(
         #[source]
         #[from]
         std::io::Error,
     ),
+
     #[error("http error: {0}")]
+    /// A [`ReqwestError`] occurred while communicating with the SPARQL endpoint.
     Http(#[source] Box<ReqwestError>),
+
     #[error("{0}")]
+    /// An unsupported media-type was returned by the SPARQL endpoint.
     Unsupported(String),
+
     #[error("invalid iri: {0}")]
+    /// An invalid IRI was returned by the SPARQL endpoint.
     Iri(
         #[source]
         #[from]
         sophia::iri::InvalidIri,
     ),
+
     #[error("invalid bnode identifier: {0}")]
+    /// An invalid blank node identifier was returned by the SPARQL endpoint.
     BNode(
         #[source]
         #[from]
         sophia::api::term::bnode_id::InvalidBnodeId,
     ),
+
     #[error("invalid language tag: {0}")]
+    /// An invalid language tag was returned by the SPARQL endpoint.
     LanguageTag(
         #[source]
         #[from]
         sophia::api::term::language_tag::InvalidLanguageTag,
     ),
+
     #[error("turtle parsing error: {0}")]
+    /// Invalid Turtle syntax was returned by the SPARQL endpoint.
     RioTurtle(
         #[source]
         #[from]
         rio_turtle::TurtleError,
     ),
+
     #[error("RDF/XML parsing error: {0}")]
+    /// Invalid RDF/XML syntax was returned by the SPARQL endpoint.
     RioXml(
         #[source]
         #[from]
         rio_xml::RdfXmlError,
     ),
+
     #[error("XML results parsing error: {0}")]
+    /// Invalid XML syntax was returned by the SPARQL endpoint.
     Xml(
         #[source]
         #[from]
         quick_xml::Error,
     ),
+
     #[error("XML results structural error: {0}")]
+    /// Invalid XML Sparql results were returned by the SPARQL endpoint.
     SparqlXml(String),
 }
 
@@ -249,7 +274,7 @@ impl From<ReqwestError> for Error {
 /// A SPARQL query prepared for a [`SparqlClient`].
 ///
 /// NB: Actually, this type simply wraps the query as a `Box<str>`,
-/// so [preparing](sophia::sparql::SparqlDataset::prepare_query)
+/// so [preparing](sophia::api::sparql::SparqlDataset::prepare_query)
 /// it in advance has no benefit for this implementation.
 pub struct Query(Box<str>);
 
