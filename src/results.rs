@@ -10,6 +10,7 @@ mod xml_parser;
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::module_name_repetitions)]
 pub enum ResultsDocument {
     Boolean {
         head: BooleanHead,
@@ -74,8 +75,8 @@ pub enum Literal {
 impl TryFrom<Term> for StaticTerm {
     type Error = Error;
     fn try_from(other: Term) -> Result<StaticTerm, Error> {
-        use self::Literal::*;
-        use Term::*;
+        use self::Literal::{Datatype, Lang, Simple};
+        use Term::{Bnode, Literal, Uri};
         match other {
             Bnode { value } => Ok(BnodeId::new(value)?.into_term()),
             Literal(Simple { value }) => Ok(value.as_ref().into_term()),

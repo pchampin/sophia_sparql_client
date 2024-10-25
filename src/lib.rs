@@ -66,6 +66,7 @@ impl SparqlClient {
     pub const DEFAULT_ACCEPT: &'static str = "application/sparql-results+json,application/sparql-results+xml;q=0.8,text/turtle,application/n-triples;q=0.9,application/rdf+xml;q=0.8";
 
     /// Create a [`SparqlClient`] on the given SPARQL-endpoint URL.
+    #[must_use]
     pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: Box::from(endpoint),
@@ -75,6 +76,7 @@ impl SparqlClient {
     }
 
     /// Replace the underlying [`reqwest::Client`] of this client.
+    #[must_use]
     pub fn with_client(mut self, client: Client) -> Self {
         self.client = client;
         self
@@ -85,16 +87,19 @@ impl SparqlClient {
     /// This might be useful if the endpoint implements content-negotation incorrectly.
     ///
     /// See also [`DEFAULT_ACCEPT`](Self::DEFAULT_ACCEPT)
-    pub fn with_accept<T: ToString>(mut self, accept: T) -> Self {
-        self.accept = Some(accept.to_string());
+    #[must_use]
+    pub fn with_accept<T: Into<String>>(mut self, accept: T) -> Self {
+        self.accept = Some(accept.into());
         self
     }
 
     /// The [Accept HTTP header](https://tools.ietf.org/html/rfc7231.html#section-5.3.2) used by this client.
+    #[must_use]
     pub fn accept(&self) -> &str {
         self.accept.as_deref().unwrap_or(Self::DEFAULT_ACCEPT)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn wrap_triple_source<T: TripleSource + 'static>(
         triples: T,
     ) -> Result<SparqlResult<Self>, Error>
@@ -134,8 +139,7 @@ impl SparqlDataset for SparqlClient {
         let ctype = resp
             .headers()
             .get("content-type")
-            .map(|h| h.to_str().unwrap())
-            .unwrap_or("application/octet-stream")
+            .map_or("application/octet-stream", |h| h.to_str().unwrap())
             .split(';')
             .next()
             .unwrap();
@@ -176,7 +180,7 @@ impl SparqlBindings<SparqlClient> for Bindings {
         self.head
             .vars
             .iter()
-            .map(|b| b.as_ref())
+            .map(AsRef::as_ref)
             .collect::<Vec<&str>>()
     }
 }

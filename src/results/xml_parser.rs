@@ -1,16 +1,21 @@
 //! Parse XML-formatted SPARQL results.
 //!
-//! We are not using Serde here because xml_serde has a number of limitations.
+//! We are not using Serde here because `xml_serde` has a number of limitations.
 
 use std::{borrow::Cow, io::BufRead};
 
 use quick_xml::{
-    events::{BytesStart, BytesText, Event::*},
+    events::{
+        BytesStart, BytesText,
+        Event::{CData, Empty, End, Eof, Start, Text},
+    },
     name::{Namespace, QName, ResolveResult},
     NsReader,
 };
 
-use super::*;
+use super::{
+    BindingsDocument, BindingsHead, BooleanHead, HashMap, Literal, Results, ResultsDocument, Term,
+};
 use crate::Error::{self, SparqlXml};
 
 pub fn parse_results_document<R: BufRead>(data: R) -> Result<ResultsDocument, Error> {
@@ -39,14 +44,13 @@ impl<R: BufRead> SparqlXmlParser<R> {
             let (ns, local_name) = self.events.resolve_element(elt.name());
             if ns != ResolveResult::Bound(NS) {
                 return Err(SparqlXml(format!(
-                    "Unrecognized element in <head>: {:?}",
-                    local_name
+                    "Unrecognized element in <head>: {local_name:?}"
                 )));
             }
             match local_name.into_inner() {
                 b"variable" => variables.push(self.get_attr(&elt, "name")?),
                 b"link" => links.push(self.get_attr(&elt, "href")?),
-                _ => return Err(SparqlXml(format!("Unknown element <{:?}>", local_name))),
+                _ => return Err(SparqlXml(format!("Unknown element <{local_name:?}>"))),
             }
         }
         if variables.is_empty() {
@@ -54,7 +58,7 @@ impl<R: BufRead> SparqlXmlParser<R> {
             let boolean = match self.next_text()?.as_ref() {
                 "true" => true,
                 "false" => false,
-                other => return Err(SparqlXml(format!("Unrecognized boolean value '{}'", other))),
+                other => return Err(SparqlXml(format!("Unrecognized boolean value '{other}'"))),
             };
             Ok(ResultsDocument::Boolean {
                 head: BooleanHead { link: links },
@@ -82,7 +86,7 @@ impl<R: BufRead> SparqlXmlParser<R> {
             while let Some(binding) = self.next_start_expecting_maybe("binding")? {
                 let name = self.get_attr(&binding, "name")?;
                 let Some(elt) = self.next_start()? else {
-                    return Err(SparqlXml(format!("No child in <binding name='{}'>", name)));
+                    return Err(SparqlXml(format!("No child in <binding name='{name}'>")));
                 };
                 let term = self.parse_term(&elt, &name)?;
                 self.expect_closing(binding.name())?;
@@ -116,8 +120,7 @@ impl<R: BufRead> SparqlXmlParser<R> {
                 }
             }
             other => Err(SparqlXml(format!(
-                "Unrecognized term in <binding name='{}'>: {:?}",
-                name, other
+                "Unrecognized term in <binding name='{name}'>: {other:?}"
             ))),
         }
     }
@@ -125,8 +128,7 @@ impl<R: BufRead> SparqlXmlParser<R> {
     fn next_start_expecting(&mut self, local_name: &str) -> Result<BytesStart<'static>, Error> {
         match self.next_start_expecting_maybe(local_name)? {
             None => Err(SparqlXml(format!(
-                "Expected <{}>, found no element",
-                local_name
+                "Expected <{local_name}>, found no element"
             ))),
             Some(elt) => Ok(elt),
         }
@@ -137,14 +139,14 @@ impl<R: BufRead> SparqlXmlParser<R> {
         local_name: &str,
     ) -> Result<Option<BytesStart<'static>>, Error> {
         if let Some(start) = self.next_start()? {
-            if !self.check_element(&start, local_name) {
+            if self.check_element(&start, local_name) {
+                Ok(Some(start))
+            } else {
                 Err(SparqlXml(format!(
                     "Expected <{}>, found {:?}",
                     local_name,
                     start.name()
                 )))
-            } else {
-                Ok(Some(start))
             }
         } else {
             Ok(None)
@@ -179,8 +181,8 @@ impl<R: BufRead> SparqlXmlParser<R> {
     fn next_text(&mut self) -> Result<String, Error> {
         loop {
             match self.events.read_event_into(&mut self.buf)? {
-                Text(e) => return Ok(txt(e)?.map(|c| c.into_owned()).unwrap_or_else(|| "".into())),
-                End(_) => return Ok("".into()),
+                Text(e) => return Ok(txt(e)?.map_or_else(String::new, Cow::into_owned)),
+                End(_) => return Ok(String::new()),
                 Start(_) | Empty(_) => return Err(SparqlXml("Unexpected child".into())),
                 CData(_) => return Err(SparqlXml("Unexpected CDATA".into())),
                 _ => continue,
@@ -207,7 +209,7 @@ impl<R: BufRead> SparqlXmlParser<R> {
 
     fn get_attr(&mut self, start: &BytesStart<'_>, key: &str) -> Result<Box<str>, Error> {
         self.get_attr_maybe(start, key)?
-            .ok_or_else(|| SparqlXml(format!("Attribute '{:?}' not found", key)))
+            .ok_or_else(|| SparqlXml(format!("Attribute '{key:?}' not found")))
     }
 
     fn get_attr_maybe(
